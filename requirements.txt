@@ -1,0 +1,5 @@
+maxapi-python==2.5.0
+aiogram==3.32.0
+aiosqlite==0.22.1
+python-dotenv==1.2.4
+pillow==13.0.0
