@@ -42,22 +42,7 @@ HISTORY_PAGE = 8
 HISTORY_TOTAL_LIMIT = 5000  # сколько всего готовы вычитать из мессенджера
 HISTORY_STREAMS_KEPT = 10  # сколько незакрытых генераторов держим в памяти
 
-# Список чатов: подробный (карточки с аватарками) или короткий (имена)
-CHATS_VIEWS = ("long", "short")
-CHATS_VIEW_ALIASES = {
-    "short": "short",
-    "кратко": "short",
-    "короткий": "short",
-    "коротко": "short",
-    "список": "short",
-    "имена": "short",
-    "long": "long",
-    "длинный": "long",
-    "подробно": "long",
-    "авы": "long",
-    "аватарки": "long",
-}
-
+CHATS_VIEWS = ["short", "long"]
 
 def history_preview(row) -> str:  # noqa: ANN001 - HistoryRow из store
     """Подпись пункта истории: текст, тип вложения или пометка об удалении."""
@@ -122,6 +107,10 @@ class BridgeCore:
     @property
     def hub(self) -> Channel:
         return self.channels[self.hub_name]
+
+    @property
+    def clients(self) -> list[str]:
+        return [self.channels[channel].display for channel in self.channels if channel != self.hub_name]
 
     def display(self, channel_name: str) -> str:
         channel = self.channels.get(channel_name)
@@ -196,15 +185,10 @@ class BridgeCore:
     # --- приём из каналов -----------------------------------------------
 
     async def on_message(self, incoming: Incoming) -> None:
-        if incoming.channel == self.hub_name:
-            if incoming.own:
-                await self._from_hub_user(incoming)
-            return
         await self._from_spoke(incoming)
 
     async def _from_spoke(self, incoming: Incoming) -> None:
         """Сообщение из источника: в историю, затем в главный канал."""
-        channel = self.channels[incoming.channel]
         self._apply_limits(incoming.channel)
 
         await self.store.add_history(
@@ -218,8 +202,6 @@ class BridgeCore:
             incoming.text or None,
         )
 
-        if incoming.own:
-            return  # свои сообщения в источнике дальше не пересылаем
         if not await self.allowed(incoming.channel, incoming.chat_id):
             log.debug("чат %s:%s пропущен", incoming.channel, incoming.chat_id)
             return
@@ -233,36 +215,7 @@ class BridgeCore:
         if incoming.note:
             body = f"{body}\n{incoming.note}".strip()
 
-        # если это ответ после статуса «[Прочитано]» — заменяем статус текстом
-        mark = await self.store.pop_read_mark(self.hub_name, hub_chat)
-        if (
-            mark is not None
-            and mark[1] == incoming.channel
-            and mark[2] == incoming.chat_id
-            and not incoming.media
-            and body
-            and len(body) <= 1000
-        ):
-            await self.hub.edit_text(hub_chat, mark[0], body)
-            await self.store.remember_route(
-                self.hub_name,
-                hub_chat,
-                mark[0],
-                incoming.channel,
-                incoming.chat_id,
-                incoming.message_id,
-                incoming.sender_name,
-                incoming.ts,
-            )
-            await self.store.set_history_hub(
-                incoming.channel,
-                incoming.chat_id,
-                incoming.message_id,
-                self.hub_name,
-                hub_chat,
-                mark[0],
-            )
-            return
+        log.warning(f"_from_spoke {incoming=}")
 
         sent_ids: list[int] = []
         if incoming.media:
@@ -501,9 +454,8 @@ class BridgeCore:
                 if item.numbered:
                     # подпись уже с номером — не дублируем
                     lines.append(f"{item.label}{detail}")
-                    number += 1
-                    continue
-                lines.append(f"{number}. {item.label}{detail}")
+                else:
+                    lines.append(f"{number}. {item.label}{detail}")
                 number += 1
             lines.append("")
             lines.append("Напиши номер пункта. Настройку можно менять и так: /settings 16 200")
@@ -664,7 +616,7 @@ class BridgeCore:
             if ref.can_write:
                 items.append(
                     MenuItem(
-                        label="Писать сюда",
+                        label="Писать",
                         action=f"pick:{group}",
                         group=group,
                         title=title,
@@ -1000,13 +952,6 @@ class BridgeCore:
         hub_chat = incoming.chat_id
         user_id = incoming.sender_id or 0
 
-        # ждём значение настройки — очередное сообщение и есть значение
-        if not text.startswith("/"):
-            applied = await self.apply_input(hub_chat, text)
-            if applied is not None:
-                await self.hub.send_text(hub_chat, applied)
-                return True
-
         if text.isdigit():
             items = self._menu_items.get(hub_chat) or []
             index = int(text)
@@ -1031,15 +976,11 @@ class BridgeCore:
             await self.hub.send_text(hub_chat, HUB_HELP)
             return True
 
-        if command in {"cancel", "отмена"}:
-            await self.hub.send_text(hub_chat, await self.cancel_input(hub_chat))
-            return True
-
         if command in {"chats", "чаты", "список"}:
             menu_id = "chats"
             mode = (args or "").split(" ")[0].lower()
-            if mode in CHATS_VIEW_ALIASES:
-                await self.settings.set("chats_view", CHATS_VIEW_ALIASES[mode])
+            if mode in CHATS_VIEWS:
+                await self.settings.set("chats_view", mode)
                 await self.hub.send_text(
                     hub_chat,
                     f"Вид списка чатов: {self._option_value(BY_KEY['chats_view'])}",
@@ -1069,16 +1010,12 @@ class BridgeCore:
             await self.show_menu(hub_chat, f"history:{target[0]}:{target[1]}")
             return True
 
-        if command in {"me", "кто"}:
+        if command in {"profile", "профиль"}:
             active = await self.store.get_active(user_id) if user_id else None
-            lines = [
-                f"Главный канал: {self.display(self.hub_name)}",
-                "Каналы: " + ", ".join(self.display(name) for name in self.channels),
-            ]
             if active is not None:
                 channel_name, _chat_id, title = active
-                lines.append(f"Активный чат: {self.display(channel_name)} · {title}")
-            await self.hub.send_text(hub_chat, "\n".join(lines))
+
+                await self.hub.send_text(hub_chat, f"Активный чат: {self.display(channel_name)} · {title}")
             return True
 
         if command in {"stop", "стоп"}:
@@ -1164,10 +1101,9 @@ class BridgeCore:
                 return False, "Номер чата — 0 (Избранное) или положительное число."
             return True, number
         if option.key == "chats_view":
-            value = CHATS_VIEW_ALIASES.get(text)
-            if value is None:
+            if text.lower() not in ["short", "long"]:
                 return False, "Для вида списка: short или long."
-            return True, value
+            return True, text
         found = next(
             (
                 name
@@ -1208,36 +1144,6 @@ class BridgeCore:
             f"Пришли новое значение{self._input_hint(option)} сообщением. "
             "Отмена — /cancel."
         )
-
-    async def cancel_input(self, hub_chat_id: int) -> str:
-        key = self._pending_input.pop(hub_chat_id, None)
-        if key is None:
-            return "Нечего отменять."
-        option = BY_KEY.get(key)
-        label = option.label if option is not None else key
-        return f"{label}: отменил, значение прежнее."
-
-    async def apply_input(self, hub_chat_id: int, text: str) -> str | None:
-        """Если ждём значение — применяет введённое и возвращает ответ."""
-        key = self._pending_input.get(hub_chat_id)
-        if key is None:
-            return None
-        option = BY_KEY.get(key)
-        if option is None:
-            self._pending_input.pop(hub_chat_id, None)
-            return None
-
-        raw = (text or "").strip()
-        if raw.lower() in {"отмена", "cancel", "-", "/cancel"}:
-            return await self.cancel_input(hub_chat_id)
-
-        ok, value = self._coerce_value(option, raw)
-        if not ok:
-            return f"{value} Ещё раз или /cancel."
-        await self.settings.set(option.key, value)
-        self._pending_input.pop(hub_chat_id, None)
-        await self.refresh_menu(hub_chat_id)
-        return f"{option.label}: {self._option_value(option)}"
 
     async def apply_setting(self, spec: str) -> str:
         """``/settings 5 выкл`` — применить настройку и вернуть ответ.
@@ -1403,6 +1309,9 @@ class BridgeCore:
         )
         if not rows:
             return
+
+        log.debug(f"{rows=}")
+
         await self.store.mark_read(
             change.channel,
             change.chat_id,
@@ -1417,15 +1326,7 @@ class BridgeCore:
         title = rows[0].title
         head = f"{self.display(change.channel)} · {title}"
         reply_to = rows[0].hub_message_id if len(rows) == 1 else None
-        sent = await self.hub.send_text(hub_chat, f"{head}\n[Прочитано]", reply_to=reply_to)
-        if sent:
-            await self.store.set_read_mark(
-                self.hub_name,
-                hub_chat,
-                sent,
-                change.channel,
-                change.chat_id,
-            )
+        await self.hub.send_text(hub_chat, f"{head}\n[Прочитано]", reply_to=reply_to)
 
     async def _on_typing(self, change: Change) -> None:
         if not self.settings.bool("notify_typing"):

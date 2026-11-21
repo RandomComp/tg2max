@@ -180,6 +180,26 @@ class TelegramChannel:
         except Exception:
             log.debug("не смог показать «печатает»", exc_info=True)
 
+    async def download_avatar(self, url: str) -> bytes | None:
+        key = avatar_cache_key(url) if url else ""
+        file_id = None
+        if key and self._avatar_get is not None:
+            file_id = await self._avatar_get(key)
+        if file_id:
+            try:
+                await self.bot.send_photo(
+                    chat_id,
+                    file_id,
+                    caption=caption,
+                    parse_mode=None,
+                    reply_markup=_markup(group_items),
+                )
+                return None
+            except Exception:
+                log.debug("file_id аватарки %s устарел", url, exc_info=True)
+
+        return await self.avatar_bytes(url)
+
     async def send_menu(
         self,
         chat_id: int,
@@ -204,6 +224,8 @@ class TelegramChannel:
             )
             return sent.message_id
 
+        log.debug(f"{groups=}")
+
         header = await self.bot.send_message(chat_id, text[:TG_TEXT_LIMIT], parse_mode=None)
         for key, group_items in groups.items():
             if not key:
@@ -216,7 +238,10 @@ class TelegramChannel:
                     )
                 continue
             caption = (group_items[0].title or group_items[0].label)[:1020]
+
+
             url = group_items[0].avatar_url
+
             key = avatar_cache_key(url) if url else ""
             file_id = None
             if key and self._avatar_get is not None:
@@ -235,6 +260,7 @@ class TelegramChannel:
                     log.debug("file_id аватарки %s устарел", url, exc_info=True)
 
             data = await self.avatar_bytes(url)
+
             if data:
                 sent = await self.bot.send_photo(
                     chat_id,
@@ -369,6 +395,9 @@ class TelegramChannel:
         elif message.voice or message.video_note:
             target = message.voice or message.video_note
             name, kind = "voice.ogg", VOICE
+        elif message.audio:
+            target = message.audio
+            name, kind = target.file_name, VOICE
         elif message.document:
             target = message.document
             name, kind = message.document.file_name or "file", DOCUMENT

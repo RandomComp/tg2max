@@ -107,7 +107,6 @@ class MaxChannel:
             media=[Media(item.kind, item.name, item.data) for item in media],
             attach_kinds=_attach_kinds(message),
             note=" ".join(part for part in (attachment_note(message), note) if part),
-            own=bool(self.bridge.me_id and message.sender == self.bridge.me_id),
             reply_to=_reply_id(message),
             raw=message,
         )
@@ -325,7 +324,6 @@ class MaxChannel:
                     sender_name="Я" if own else label,
                     ts=message.time or 0,
                     attach_kinds=_attach_kinds(message),
-                    own=own,
                     raw=message,
                 )
 
@@ -371,7 +369,6 @@ class MaxChannel:
             media=[Media(item.kind, item.name, item.data) for item in media],
             attach_kinds=_attach_kinds(message),
             note=note,
-            own=own,
             raw=message,
         )
 

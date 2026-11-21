@@ -89,7 +89,6 @@ class Incoming:
     media: list[Media] = field(default_factory=list)
     attach_kinds: str = "text"
     note: str = ""
-    own: bool = False
     reply_to: int | None = None
     raw: Any = None
 

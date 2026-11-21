@@ -23,7 +23,7 @@ from aiogram.types import (
 from aiogram.types import Message as TgMessage
 from aiogram.types import TelegramObject
 
-from bridge import CHATS_VIEW_ALIASES, BridgeCore
+from bridge import CHATS_VIEWS, BridgeCore
 from channels.telegram import TelegramChannel
 from config import Config
 from settings import BY_KEY, Settings
@@ -133,29 +133,30 @@ def build_router(
     async def cmd_start(message: TgMessage) -> None:
         await message.answer(HELP, reply_markup=main_menu())
 
-    @router.message(Command("me"))
-    async def cmd_me(message: TgMessage) -> None:
-        lines = [f"Главный канал: <b>{html.escape(core.display(core.hub_name))}</b>"]
-        lines.append(f"Каналы: {html.escape(channels_line())}")
-        active = await store.get_active(message.from_user.id)
+    @router.message(Command("profile"))
+    async def cmd_profile(message: TgMessage) -> None:
+        lines = []
+
+        avatar_file = await store.get_avatar_file(message.from_user.id)
+
+        print(f"{avatar_file=}")
+
+        active = await store.get_active(message.from_user.id) if message.from_user.id else None
         if active is not None:
             channel_name, _chat_id, title = active
-            lines.append(
-                f"Активный чат: {html.escape(core.display(channel_name))} · "
-                f"{html.escape(title)}"
-            )
+
+            lines.append(f"Активный чат: {core.display(channel_name)} · {title}")
         else:
             lines.append("Активный чат не выбран")
-        muted = await store.muted_chats()
-        lines.append(f"Игнорируемых чатов: {len(muted)}")
+
         await message.answer("\n".join(lines))
 
     @router.message(Command("chats"))
     async def cmd_chats(message: TgMessage, command: CommandObject | None = None) -> None:
         args = ((command.args if command else None) or "").strip()
         mode = args.split(" ")[0].lower() if args else ""
-        if mode in CHATS_VIEW_ALIASES:
-            await settings.set("chats_view", CHATS_VIEW_ALIASES[mode])
+        if mode in CHATS_VIEWS:
+            await settings.set("chats_view", mode)
             await message.answer(
                 f"Вид списка чатов: {core.option_value('chats_view')}",
                 parse_mode=None,
@@ -268,7 +269,7 @@ def build_router(
         if message.text == BUTTON_CHATS:
             await cmd_chats(message)
         elif message.text == BUTTON_PROFILE:
-            await cmd_me(message)
+            await cmd_profile(message)
         elif message.text == BUTTON_SETTINGS:
             await cmd_settings(message)
         else:
@@ -322,9 +323,13 @@ def build_router(
         channel_name, chat_id, title, reply_source = target
         limit = settings.int("limit_to_max")
         media = await telegram.download_media(message, limit * 1024 * 1024)
+
         if kind != "text" and not media:
+            log.warning(f"{message=}")
+
             await message.reply(f"Не смог переслать файл (лимит {limit} МБ).")
             return
+
         await core.send_out(
             channel_name,
             chat_id,
@@ -339,11 +344,7 @@ def build_router(
         if not message.text or message.text.startswith("/"):
             await message.answer("Не знаю такую команду. /help")
             return
-        # если настройка ждёт новое значение — это сообщение и есть значение
-        applied = await core.apply_input(message.chat.id, message.text)
-        if applied is not None:
-            await message.answer(applied, parse_mode=None)
-            return
+
         await relay(message)
 
     @router.message(F.photo | F.document | F.video | F.animation | F.voice | F.video_note)
@@ -355,9 +356,7 @@ def build_router(
 
     @router.message(F.sticker | F.audio)
     async def on_other(message: TgMessage) -> None:
-        await message.reply(
-            "Стикеры и аудио пока не пересылаю. Можно: текст, фото, видео, файлы, голосовые и кружки."
-        )
+        await relay(message, kind="media")
 
     router.message.middleware(OwnerGate(store, cfg.owner_id))
     router.callback_query.middleware(OwnerGate(store, cfg.owner_id))

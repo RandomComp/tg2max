@@ -72,6 +72,7 @@ async def main() -> None:
     telegram = TelegramChannel(bot)
     telegram.set_avatar_cache(store.get_avatar_file, store.set_avatar_file)
     max_channel = MaxChannel(max_bridge)
+
     channels = {telegram.name: telegram, max_channel.name: max_channel}
 
     core = BridgeCore(
@@ -86,7 +87,7 @@ async def main() -> None:
 
     async def on_max_ready(profile: str) -> None:
         await core.hub.send_text(
-            await core.hub_inbox(), f"MAX подключён: {profile}"
+            await core.hub_inbox(), f"{', '.join(core.clients)} подключён(-ы): {profile}"
         )
 
     max_bridge.on_ready = on_max_ready
