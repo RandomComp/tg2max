@@ -137,12 +137,12 @@ def build_router(
     async def cmd_profile(message: TgMessage) -> None:
         lines = []
 
-        avatar_file = await store.get_avatar_file(message.from_user.id)
-
-        print(f"{avatar_file=}")
-
         active = await store.get_active(message.from_user.id) if message.from_user.id else None
         if active is not None:
+            avatar_file = await store.get_avatar_file(message.from_user.id)
+
+            print(f"{avatar_file=}")
+
             channel_name, _chat_id, title = active
 
             lines.append(f"Активный чат: {core.display(channel_name)} · {title}")

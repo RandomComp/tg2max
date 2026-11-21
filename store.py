@@ -108,15 +108,6 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS messages_chat_ts ON messages(channel, chat_id, ts DESC);
 
-CREATE TABLE IF NOT EXISTS read_mark (
-    hub_channel TEXT NOT NULL,
-    hub_chat_id INTEGER NOT NULL,
-    hub_message_id INTEGER NOT NULL,
-    channel TEXT NOT NULL,
-    chat_id INTEGER NOT NULL,
-    PRIMARY KEY (hub_channel, hub_chat_id)
-);
-
 CREATE TABLE IF NOT EXISTS avatar_file (
     url TEXT PRIMARY KEY,
     file_id TEXT NOT NULL
